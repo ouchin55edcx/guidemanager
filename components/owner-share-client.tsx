@@ -30,10 +30,15 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
   const [tab, setTab] = useState<Tab>('overview')
   const [expanded, setExpanded] = useState<number | null>(null)
   const [mapMode, setMapMode] = useState<'all' | number>('all')
+  const [mapUnassignedOnly, setMapUnassignedOnly] = useState(false)
+  const [incompleteOnly, setIncompleteOnly] = useState(false)
+  const [noGuideOnly, setNoGuideOnly] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const [saved, setSaved] = useState('')
 
   const groups = useMemo(() => [...new Set(Object.values(assigned).filter(Boolean))].sort((a, b) => a - b), [assigned])
+  const groupPax = (number: number) => total(bookings.filter(b => assigned[b.id] === number))
+  const visibleGroups = useMemo(() => groups.filter(number => (!incompleteOnly || groupPax(number) < 17) && (!noGuideOnly || !guides[number]?.trim())), [groups, bookings, assigned, guides, incompleteOnly, noGuideOnly])
   const unassigned = bookings.filter(b => !assigned[b.id])
   const totalPax = total(bookings)
   const unassignedPax = total(unassigned)
@@ -117,7 +122,7 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
   useEffect(() => {
     if (phase !== 'ready' || tab !== 'map' || !map.current) return
     const markers: mapboxgl.Marker[] = []
-    const visible = bookings.filter(b => mapMode === 'all' || assigned[b.id] === mapMode)
+    const visible = bookings.filter(b => (mapUnassignedOnly ? !assigned[b.id] : mapMode === 'all' || assigned[b.id] === mapMode))
     visible.forEach(b => {
       const point = coords(b.pickup)
       if (!point) return
@@ -137,7 +142,7 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
       map.current.fitBounds(bounds, { padding: 50, maxZoom: 13, duration: 500 })
     }
     return () => markers.forEach(marker => marker.remove())
-  }, [bookings, assigned, mapMode, phase, tab])
+  }, [bookings, assigned, mapMode, mapUnassignedOnly, phase, tab])
 
   if (phase !== 'ready') {
     return (
@@ -173,7 +178,6 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
     )
   }
 
-  const groupPax = (number: number) => total(bookings.filter(b => assigned[b.id] === number))
   const tabs: { id: Tab; label: string; icon: typeof Home; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: Home },
     { id: 'groups', label: 'Groups', icon: Layers, badge: groups.length },
@@ -210,6 +214,7 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
             </div>
           </div>
           <div className="pointer-events-auto absolute inset-x-3 top-14 z-10">
+            <button type="button" onClick={() => setMapUnassignedOnly(value => !value)} className={`mb-2 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-[10px] font-semibold backdrop-blur-md ${mapUnassignedOnly ? 'bg-primary text-primary-foreground' : 'text-white'}`}>Unassigned only</button>
             <label className="block">
               <span className="sr-only">Filter map by group</span>
               <select value={mapMode === 'all' ? 'all' : String(mapMode)} onChange={e => setMapMode(e.target.value === 'all' ? 'all' : Number(e.target.value))} className="h-11 w-full rounded-xl border border-white/15 bg-black/60 px-3 text-xs font-medium text-white backdrop-blur-md">
@@ -272,7 +277,11 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
 
           {tab === 'groups' && (
             <section className="space-y-3">
-              {groups.map(number => {
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setIncompleteOnly(value => !value)} className={`rounded-full border px-3 py-1.5 text-[11px] font-medium ${incompleteOnly ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'}`}>Incomplete only</button>
+                <button type="button" onClick={() => setNoGuideOnly(value => !value)} className={`rounded-full border px-3 py-1.5 text-[11px] font-medium ${noGuideOnly ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'}`}>No guide assigned</button>
+              </div>
+              {visibleGroups.map(number => {
                 const items = bookings.filter(b => assigned[b.id] === number)
                 const open = expanded === number
                 return (
@@ -316,7 +325,7 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
                   </div>
                 )
               })}
-              {groups.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No groups yet. Assign bookings to a group first.</p>}
+              {visibleGroups.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">{groups.length === 0 ? 'No groups yet. Assign bookings to a group first.' : 'No groups match these filters.'}</p>}
             </section>
           )}
 
