@@ -20,11 +20,43 @@ export function ensureTables() {
       date TEXT NOT NULL,
       group_number INTEGER NOT NULL,
       guide TEXT NOT NULL DEFAULT '',
+      guide_phone TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (date, group_number)
     );
+    ALTER TABLE group_guides ADD COLUMN IF NOT EXISTS guide_phone TEXT NOT NULL DEFAULT '';
+    ALTER TABLE share_links ADD COLUMN IF NOT EXISTS owner_id TEXT;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS picked_up BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS picked_up_at TIMESTAMPTZ;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pickup_time TEXT;
+    CREATE TABLE IF NOT EXISTS message_templates (
+      workspace_id TEXT PRIMARY KEY,
+      whatsapp TEXT NOT NULL DEFAULT 'Bonjour {client_name}, je suis {guide_name}, votre guide pour aujourd’hui. Je passerai vous chercher à {pickup_time} à votre emplacement. À bientôt !',
+      email_subject TEXT NOT NULL DEFAULT 'Votre prise en charge aujourd’hui',
+      email_body TEXT NOT NULL DEFAULT 'Bonjour {client_name},\n\nJe suis {guide_name}, votre guide pour aujourd’hui. Je passerai vous chercher à {pickup_time} à votre emplacement.\n\nÀ bientôt !\n\nNombre de voyageurs : {pax}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `).then(() => undefined)
   return bootstrap
+}
+
+export const defaultTemplates = {
+  whatsapp: 'Bonjour {client_name}, je suis {guide_name}, votre guide pour aujourd’hui. Je passerai vous chercher à {pickup_time} à votre emplacement. À bientôt !',
+  emailSubject: 'Votre prise en charge aujourd’hui',
+  emailBody: 'Bonjour {client_name},\n\nJe suis {guide_name}, votre guide pour aujourd’hui. Je passerai vous chercher à {pickup_time} à votre emplacement.\n\nÀ bientôt !\n\nNombre de voyageurs : {pax}',
+}
+
+export async function fetchTemplates(workspaceId: string) {
+  await ensureTables()
+  await db.execute(sql`INSERT INTO message_templates (workspace_id) VALUES (${workspaceId}) ON CONFLICT (workspace_id) DO NOTHING`)
+  const result = await db.execute(sql`SELECT whatsapp, email_subject AS "emailSubject", email_body AS "emailBody" FROM message_templates WHERE workspace_id = ${workspaceId}`)
+  const row = result.rows[0] as typeof defaultTemplates | undefined
+  return row || defaultTemplates
+}
+
+export async function saveTemplates(workspaceId: string, templates: { whatsapp: string; emailSubject: string; emailBody: string }) {
+  await ensureTables()
+  await db.execute(sql`INSERT INTO message_templates (workspace_id, whatsapp, email_subject, email_body, updated_at) VALUES (${workspaceId}, ${templates.whatsapp}, ${templates.emailSubject}, ${templates.emailBody}, now()) ON CONFLICT (workspace_id) DO UPDATE SET whatsapp = EXCLUDED.whatsapp, email_subject = EXCLUDED.email_subject, email_body = EXCLUDED.email_body, updated_at = now()`)
 }
 
 export async function groupForDate(date: string) {
@@ -37,8 +69,13 @@ export async function fetchGuides(date: string): Promise<Record<number, string>>
   return Object.fromEntries(result.rows.map(row => [Number(row.group_number), String(row.guide || '')]))
 }
 
-export async function saveGuide(date: string, group: number, guide: string) {
-  await db.execute(sql`INSERT INTO group_guides (date, group_number, guide) VALUES (${date}, ${group}, ${String(guide || '').trim()}) ON CONFLICT (date, group_number) DO UPDATE SET guide = EXCLUDED.guide, updated_at = now()`)
+export async function fetchGuideContact(date: string, group: number) {
+  const result = await db.execute(sql`SELECT guide, guide_phone AS "guidePhone" FROM group_guides WHERE date = ${date} AND group_number = ${group}`)
+  return (result.rows[0] || { guide: '', guidePhone: '' }) as { guide: string; guidePhone: string }
+}
+
+export async function saveGuide(date: string, group: number, guide: string, guidePhone = '') {
+  await db.execute(sql`INSERT INTO group_guides (date, group_number, guide, guide_phone) VALUES (${date}, ${group}, ${String(guide || '').trim()}, ${String(guidePhone || '').trim()}) ON CONFLICT (date, group_number) DO UPDATE SET guide = EXCLUDED.guide, guide_phone = COALESCE(NULLIF(EXCLUDED.guide_phone, ''), group_guides.guide_phone), updated_at = now()`)
 }
 
 export async function saveAssignmentsForDate(date: string, assignments: Record<string, number> | null | undefined) {

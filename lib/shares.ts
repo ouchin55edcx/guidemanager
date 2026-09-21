@@ -27,12 +27,12 @@ export async function createOwnerShare(date: string) {
   return { token, pin, date, expiresAt: expiresAt.toISOString(), url: `/share/${token}` }
 }
 
-export async function createGuideShare(date: string, groupNumber: number) {
+export async function createGuideShare(date: string, groupNumber: number, ownerId = 'default') {
   await ensureTables()
   const token = generateToken()
   const pin = generatePin()
   const expiresAt = new Date(Date.now() + SHARE_TTL_MS)
-  await db.execute(sql`INSERT INTO share_links (token, pin_hash, role, date, group_number, expires_at) VALUES (${token}, ${hashPin(pin)}, 'guide', ${date}, ${groupNumber}, ${expiresAt})`)
+  await db.execute(sql`INSERT INTO share_links (token, pin_hash, role, date, group_number, owner_id, expires_at) VALUES (${token}, ${hashPin(pin)}, 'guide', ${date}, ${groupNumber}, ${ownerId}, ${expiresAt})`)
   return { token, pin, date, groupNumber, expiresAt: expiresAt.toISOString(), url: `/g/${token}` }
 }
 

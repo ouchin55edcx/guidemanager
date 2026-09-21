@@ -20,7 +20,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
 
   const date = String(share.date).slice(0, 10)
   const [globalRows, guides] = await Promise.all([
-    db.execute(sql`SELECT booking_id AS id, traveler, phone, email, pax, pickup, travel_date FROM bookings WHERE travel_date = ${date}::date ORDER BY created_at ASC`),
+    db.execute(sql`SELECT booking_id AS id, traveler, phone, email, pax, pickup, pickup_time AS "pickupTime", picked_up AS "pickedUp", travel_date FROM bookings WHERE travel_date = ${date}::date ORDER BY created_at ASC`),
     fetchGuides(date),
   ])
   const g = await groupForDate(date)

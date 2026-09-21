@@ -6,7 +6,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import { ChevronDown, Clipboard, Home, Layers, Map as MapIcon, ShieldAlert, Users } from 'lucide-react'
 import { groupColor } from '@/lib/colors'
 
-type Booking = { id: string; traveler?: string; phone?: string; email?: string | null; pax: number; pickup: string }
+type Booking = { id: string; traveler?: string; phone?: string; email?: string | null; pax: number; pickup: string; pickedUp?: boolean }
 type Assigned = Record<string, number>
 
 function coords(value: string) { const s = decodeURIComponent(String(value || '')).replace(/\\u003d/g, '=').replace(/\\u0026/g, '&').replace(/&amp;/g, '&'); const patterns = [/\/maps\/place\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i, /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/, /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/, /(?:query|ll|center)=(-?\d+(?:\.\d+)?)[,%20]+(-?\d+(?:\.\d+)?)/i]; for (const pattern of patterns) { const m = s.match(pattern); if (!m) continue; const lat = Number(m[1]); const lng = Number(m[2]); if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat, lng } } return null }
@@ -305,13 +305,13 @@ export default function OwnerShareClient({ token, mapToken }: { token: string; m
                     {open && (
                       <div className="space-y-2 border-t border-border/70 bg-background/40 px-4 py-3">
                         {items.map(booking => (
-                          <div key={booking.id} className="rounded-xl border border-border/70 bg-card p-3">
+                          <div key={booking.id} className={`rounded-xl border border-border/70 p-3 ${booking.pickedUp ? 'bg-emerald-500/10 ring-1 ring-emerald-500/30' : 'bg-card'}`}>
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-medium">{booking.traveler || booking.id}</p>
+                                <p className="truncate text-sm font-medium">{booking.pickedUp && <span className="mr-1 text-emerald-600">✓</span>}{booking.traveler || booking.id}</p>
                                 <p className="truncate font-mono text-[10px] text-muted-foreground">{booking.id} · {booking.phone || 'no phone'}</p>
                               </div>
-                              <span className="shrink-0 text-xs font-bold">{booking.pax} pax</span>
+                              <span className="shrink-0 text-xs font-bold">{booking.pickedUp ? 'Picked up' : `${booking.pax} pax`}</span>
                             </div>
                             <div className="mt-2 flex items-center gap-2">
                               <a href={booking.pickup} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-[11px] text-primary underline">Open pickup</a>

@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ collectionBookings: result.rows })
   }
   const [global, collections, blacklist, assignmentRows] = await Promise.all([
-    db.execute(sql`SELECT booking_id AS id, traveler, phone, email, pax, pickup, travel_date FROM bookings WHERE travel_date = ${date}::date ORDER BY created_at ASC`),
+    db.execute(sql`SELECT booking_id AS id, traveler, phone, email, pax, pickup, pickup_time AS "pickupTime", picked_up AS "pickedUp", travel_date FROM bookings WHERE travel_date = ${date}::date ORDER BY created_at ASC`),
     db.execute(sql`SELECT c.id, c.name, c.created_at, COUNT(cb.id)::int AS count FROM booking_collections c LEFT JOIN collection_bookings cb ON cb.collection_id = c.id WHERE c.group_id = ${g.id} GROUP BY c.id ORDER BY c.created_at DESC`),
     db.execute(sql`SELECT booking_id FROM booking_blacklist ORDER BY created_at ASC`),
     db.execute(sql`SELECT cb.booking_id, c.name FROM collection_bookings cb JOIN booking_collections c ON c.id = cb.collection_id WHERE c.group_id = ${g.id} AND c.name LIKE 'Group %'`),

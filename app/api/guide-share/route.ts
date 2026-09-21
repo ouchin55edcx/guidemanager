@@ -6,12 +6,13 @@ import { createGuideShare, revokeShare } from '@/lib/shares'
 async function authorized() { return Boolean((await auth.api.getSession({ headers: await headers() }))?.user) }
 
 export async function POST(request: Request) {
-  if (!await authorized()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const session = await auth.api.getSession({ headers: await headers() })
+  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const body = await request.json()
   const date = String(body.date || '').trim()
   const groupNumber = Number(body.group)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(groupNumber) || groupNumber < 1) return NextResponse.json({ error: 'Invalid group or date' }, { status: 400 })
-  return NextResponse.json(await createGuideShare(date, groupNumber), { status: 201 })
+  return NextResponse.json(await createGuideShare(date, groupNumber, session.user.id), { status: 201 })
 }
 
 export async function DELETE(request: Request) {
