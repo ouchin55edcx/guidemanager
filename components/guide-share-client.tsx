@@ -25,6 +25,7 @@ export default function GuideShareClient({ token, mapToken }: { token: string; m
   const mapRef = useRef<HTMLDivElement>(null); const map = useRef<mapboxgl.Map | null>(null)
   const [phase, setPhase] = useState<'loading' | 'pin' | 'locked' | 'ready'>('loading')
   const [pin, setPin] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
+  const [mapReady, setMapReady] = useState(false)
   const [data, setData] = useState<{ date: string; groupNumber: number; expiresAt: string; guide: string; bookings: Booking[] } | null>(null)
 
   async function load() {
@@ -50,21 +51,22 @@ export default function GuideShareClient({ token, mapToken }: { token: string; m
     mapboxgl.accessToken = mapToken
     map.current = new mapboxgl.Map({ container: mapRef.current, style: 'mapbox://styles/mapbox/dark-v11', center: [-7.5898, 31.6295], zoom: 11 })
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right')
-    return () => { map.current?.remove(); map.current = null }
+    map.current.on('load', () => setMapReady(true))
+    return () => { setMapReady(false); map.current?.remove(); map.current = null }
   }, [phase, data, mapToken])
 
   useEffect(() => {
-    if (phase !== 'ready' || !data || !map.current) return
+    if (phase !== 'ready' || !data || !map.current || !mapReady) return
     const markers: mapboxgl.Marker[] = []; const points: { lat: number; lng: number }[] = []
     data.bookings.forEach(booking => {
       const point = coords(booking.pickup); if (!point) return; points.push(point)
       const element = document.createElement('button'); element.textContent = String(booking.pax); element.setAttribute('aria-label', `Pickup ${booking.traveler || booking.id}`); element.style.cssText = 'width:38px;height:38px;border-radius:50%;border:3px solid white;background:#37b6a4;box-shadow:0 2px 8px #0008;font-weight:800;cursor:pointer'
-      const popup = new mapboxgl.Popup({ closeOnClick: true }).setHTML(`<div style="min-width:190px"><strong>${escapeHtml(booking.traveler || booking.id)}</strong><br/>${booking.phone ? escapeHtml(booking.phone) : 'No phone'}<br/>${booking.pax} pax</div>`)
+      const popup = new mapboxgl.Popup({ closeOnClick: true }).setHTML(`<div style="min-width:230px"><strong>${escapeHtml(booking.traveler || booking.id)}</strong><hr style="margin:6px 0;border:0;border-top:1px solid #ddd"/><b>Booking:</b> ${escapeHtml(booking.id)}<br/><b>Phone:</b> ${booking.phone ? escapeHtml(booking.phone) : 'No phone'}<br/><b>Pax:</b> ${booking.pax}<br/><b>Pickup:</b> ${escapeHtml(booking.pickup || 'No pickup location')}</div>`)
       markers.push(new mapboxgl.Marker(element).setLngLat([point.lng, point.lat]).setPopup(popup).addTo(map.current!))
     })
     if (points.length > 1) { const bounds = new mapboxgl.LngLatBounds(); points.forEach(point => bounds.extend([point.lng, point.lat])); map.current.fitBounds(bounds, { padding: 100, maxZoom: 14, duration: 500 }) }
     return () => markers.forEach(marker => marker.remove())
-  }, [phase, data])
+  }, [phase, data, mapReady])
 
   if (phase !== 'ready') return <main className="flex min-h-dvh items-center justify-center bg-background px-6 text-foreground"><div className="w-full max-w-sm text-center"><div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary/15 text-primary"><ShieldAlert className="size-6" /></div>{phase === 'loading' && <p className="mt-4 text-sm text-muted-foreground">Checking guide link…</p>}{phase === 'locked' && <><h1 className="mt-4 text-xl font-semibold">Link unavailable</h1><p className="mt-2 text-sm text-muted-foreground">{error || 'Ask the owner for a fresh guide link.'}</p></>}{phase === 'pin' && <><h1 className="mt-4 text-xl font-semibold">Guide pickup link</h1><p className="mt-2 text-sm text-muted-foreground">Enter the 4–6 digit PIN from the owner.</p><div className="my-5 flex justify-center gap-2">{Array.from({ length: Math.max(4, pin.length) }).map((_, index) => <span key={index} className={`size-3 rounded-full ${index < pin.length ? 'bg-primary' : 'bg-border'}`} />)}</div>{error && <p className="mb-3 text-sm text-destructive">{error}</p>}<div className="grid grid-cols-3 gap-2">{[1,2,3,4,5,6,7,8,9].map(digit => <button key={digit} type="button" onClick={() => setPin(current => current.length < 6 ? current + digit : current)} className="h-14 rounded-2xl border border-border bg-card text-xl font-semibold">{digit}</button>)}<button type="button" onClick={() => setPin(current => current.slice(0, -1))} className="h-14 rounded-2xl text-2xl text-muted-foreground">⌫</button><button type="button" onClick={() => setPin(current => current.length < 6 ? current + '0' : current)} className="h-14 rounded-2xl border border-border bg-card text-xl font-semibold">0</button><button type="button" onClick={verify} disabled={pin.length < 4 || busy} className="h-14 rounded-2xl bg-primary text-base font-bold text-primary-foreground disabled:opacity-40">{busy ? '…' : 'GO'}</button></div></>}</div></main>
 
