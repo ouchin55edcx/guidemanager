@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import { MapPin, ShieldAlert } from 'lucide-react'
+import { Car, List, Map as MapIcon, MapPin, Navigation, ShieldAlert } from 'lucide-react'
 
-type Booking = { id: string; traveler?: string; phone?: string; pax: number; pickup: string }
+type Booking = { id: string; traveler?: string; phone?: string; pax: number; pickup: string; pickupTime?: string }
+type Point = { lat: number; lng: number; booking: Booking }
 
 function coords(value: string) {
   const text = decodeURIComponent(String(value || '')).replace(/\\u003d/g, '=').replace(/\\u0026/g, '&').replace(/&amp;/g, '&')
@@ -26,6 +27,9 @@ export default function GuideShareClient({ token, mapToken }: { token: string; m
   const [phase, setPhase] = useState<'loading' | 'pin' | 'locked' | 'ready'>('loading')
   const [pin, setPin] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
   const [mapReady, setMapReady] = useState(false)
+  const [view, setView] = useState<'map' | 'list'>('map')
+  const [routeBusy, setRouteBusy] = useState(false)
+  const [route, setRoute] = useState<{ distance: number; duration: number } | null>(null)
   const [data, setData] = useState<{ date: string; groupNumber: number; expiresAt: string; guide: string; bookings: Booking[] } | null>(null)
 
   async function load() {
@@ -56,20 +60,66 @@ export default function GuideShareClient({ token, mapToken }: { token: string; m
   }, [phase, data, mapToken])
 
   useEffect(() => {
-    if (phase !== 'ready' || !data || !map.current || !mapReady) return
+    if (phase !== 'ready' || !data || !map.current || !mapReady || view !== 'map') return
     const markers: mapboxgl.Marker[] = []; const points: { lat: number; lng: number }[] = []
     data.bookings.forEach(booking => {
       const point = coords(booking.pickup); if (!point) return; points.push(point)
       const element = document.createElement('button'); element.textContent = String(booking.pax); element.setAttribute('aria-label', `Pickup ${booking.traveler || booking.id}`); element.style.cssText = 'width:38px;height:38px;border-radius:50%;border:3px solid white;background:#37b6a4;box-shadow:0 2px 8px #0008;font-weight:800;cursor:pointer'
-      const popup = new mapboxgl.Popup({ closeOnClick: true }).setHTML(`<div style="min-width:230px"><strong>${escapeHtml(booking.traveler || booking.id)}</strong><hr style="margin:6px 0;border:0;border-top:1px solid #ddd"/><b>Booking:</b> ${escapeHtml(booking.id)}<br/><b>Phone:</b> ${booking.phone ? escapeHtml(booking.phone) : 'No phone'}<br/><b>Pax:</b> ${booking.pax}<br/><b>Pickup:</b> ${escapeHtml(booking.pickup || 'No pickup location')}</div>`)
+      const phone = booking.phone ? `<a href="tel:${escapeHtml(booking.phone)}" style="color:#0f766e;font-weight:700">${escapeHtml(booking.phone)}</a>` : 'No phone'
+      const popup = new mapboxgl.Popup({ closeOnClick: true }).setHTML(`<div style="min-width:230px"><strong>${escapeHtml(booking.traveler || booking.id)}</strong><hr style="margin:6px 0;border:0;border-top:1px solid #ddd"/><b>Phone:</b> ${phone}<br/><b>Pax:</b> ${booking.pax}${booking.pickupTime ? `<br/><b>Pickup time:</b> ${escapeHtml(booking.pickupTime)}` : ''}<br/><b>Pickup:</b> ${escapeHtml(booking.pickup || 'No pickup location')}<br/><a href="https://www.google.com/maps/search/?api=1&query=${point.lat},${point.lng}" target="_blank" rel="noreferrer" style="display:inline-block;margin-top:8px;color:#0f766e;font-weight:700">Open in Google Maps</a></div>`)
       markers.push(new mapboxgl.Marker(element).setLngLat([point.lng, point.lat]).setPopup(popup).addTo(map.current!))
     })
     if (points.length > 1) { const bounds = new mapboxgl.LngLatBounds(); points.forEach(point => bounds.extend([point.lng, point.lat])); map.current.fitBounds(bounds, { padding: 100, maxZoom: 14, duration: 500 }) }
     return () => markers.forEach(marker => marker.remove())
-  }, [phase, data, mapReady])
+  }, [phase, data, mapReady, view])
+
+  function bookingPoints() { return (data?.bookings || []).map(booking => { const point = coords(booking.pickup); return point ? { ...point, booking } : null }).filter(Boolean) as Point[] }
+  function orderedPoints() {
+    const remaining = bookingPoints(); const ordered: Point[] = []
+    if (!remaining.length) return ordered
+    ordered.push(remaining.shift()!)
+    while (remaining.length) {
+      const current = ordered[ordered.length - 1]
+      let nearestIndex = 0; let nearestDistance = Number.POSITIVE_INFINITY
+      remaining.forEach((candidate, index) => { const distance = (candidate.lat - current.lat) ** 2 + (candidate.lng - current.lng) ** 2; if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index } })
+      ordered.push(remaining.splice(nearestIndex, 1)[0])
+    }
+    return ordered
+  }
+  async function showRoute() {
+    const points = orderedPoints(); if (points.length < 2 || routeBusy || !map.current) return
+    setRouteBusy(true)
+    const coordinates = points.map(point => `${point.lng},${point.lat}`).join(';')
+    const response = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${coordinates}?alternatives=false&geometries=geojson&overview=full&steps=false&access_token=${encodeURIComponent(mapToken)}`)
+    const result = await response.json(); const trip = result.routes?.[0]
+    if (trip && map.current.isStyleLoaded()) {
+      const geojson = { type: 'Feature', properties: {}, geometry: trip.geometry }
+      if (map.current.getLayer('guide-route-line')) map.current.removeLayer('guide-route-line')
+      if (map.current.getSource('guide-route')) map.current.removeSource('guide-route')
+      map.current.addSource('guide-route', { type: 'geojson', data: geojson })
+      map.current.addLayer({ id: 'guide-route-line', type: 'line', source: 'guide-route', paint: { 'line-color': '#2dd4bf', 'line-width': 5, 'line-opacity': 0.9 } })
+      setRoute({ distance: trip.distance, duration: trip.duration })
+    } else setError('Could not calculate a driving route.')
+    setRouteBusy(false)
+  }
+  function clearRoute() { if (map.current?.getLayer('guide-route-line')) map.current.removeLayer('guide-route-line'); if (map.current?.getSource('guide-route')) map.current.removeSource('guide-route'); setRoute(null) }
+  function openMaps(point: Point) { window.open(`https://www.google.com/maps/dir/?api=1&destination=${point.lat},${point.lng}`, '_blank', 'noopener,noreferrer') }
 
   if (phase !== 'ready') return <main className="flex min-h-dvh items-center justify-center bg-background px-6 text-foreground"><div className="w-full max-w-sm text-center"><div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary/15 text-primary"><ShieldAlert className="size-6" /></div>{phase === 'loading' && <p className="mt-4 text-sm text-muted-foreground">Checking guide link…</p>}{phase === 'locked' && <><h1 className="mt-4 text-xl font-semibold">Link unavailable</h1><p className="mt-2 text-sm text-muted-foreground">{error || 'Ask the owner for a fresh guide link.'}</p></>}{phase === 'pin' && <><h1 className="mt-4 text-xl font-semibold">Guide pickup link</h1><p className="mt-2 text-sm text-muted-foreground">Enter the 4–6 digit PIN from the owner.</p><div className="my-5 flex justify-center gap-2">{Array.from({ length: Math.max(4, pin.length) }).map((_, index) => <span key={index} className={`size-3 rounded-full ${index < pin.length ? 'bg-primary' : 'bg-border'}`} />)}</div>{error && <p className="mb-3 text-sm text-destructive">{error}</p>}<div className="grid grid-cols-3 gap-2">{[1,2,3,4,5,6,7,8,9].map(digit => <button key={digit} type="button" onClick={() => setPin(current => current.length < 6 ? current + digit : current)} className="h-14 rounded-2xl border border-border bg-card text-xl font-semibold">{digit}</button>)}<button type="button" onClick={() => setPin(current => current.slice(0, -1))} className="h-14 rounded-2xl text-2xl text-muted-foreground">⌫</button><button type="button" onClick={() => setPin(current => current.length < 6 ? current + '0' : current)} className="h-14 rounded-2xl border border-border bg-card text-xl font-semibold">0</button><button type="button" onClick={verify} disabled={pin.length < 4 || busy} className="h-14 rounded-2xl bg-primary text-base font-bold text-primary-foreground disabled:opacity-40">{busy ? '…' : 'GO'}</button></div></>}</div></main>
 
   if (!data) return null
-  return <main className="fixed inset-0 bg-black text-white"><div ref={mapRef} className="absolute inset-0" /><div className="pointer-events-none absolute inset-0 z-10"><header className="pointer-events-auto absolute inset-x-3 top-3 rounded-2xl border border-white/15 bg-black/65 p-4 backdrop-blur-md"><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-teal-300">Guide pickups</p><div className="mt-1 flex items-start justify-between gap-3"><div><h1 className="text-lg font-semibold">Group {data.groupNumber}</h1><p className="text-sm text-white/70">{data.guide || 'Pickup team'} · {data.bookings.reduce((sum, booking) => sum + Number(booking.pax || 0), 0)} pax · {data.bookings.length} pickups</p></div><MapPin className="size-5 shrink-0 text-teal-300" /></div><p className="mt-2 text-[11px] text-white/60">Only this group's pickups are visible. Tap a pin for phone and details.</p></header></div></main>
+  const points = bookingPoints()
+  const totalPax = data.bookings.reduce((sum, booking) => sum + Number(booking.pax || 0), 0)
+  return <main className="fixed inset-0 bg-black text-white">
+    {view === 'map' ? <div ref={mapRef} className="absolute inset-0" /> : <div className="absolute inset-0 overflow-y-auto bg-[#101214] px-3 pb-24 pt-36"><div className="mx-auto max-w-md space-y-2">{data.bookings.map((booking, index) => { const point = points.find(item => item.booking.id === booking.id); return <article key={booking.id} className="rounded-2xl border border-white/10 bg-white/[.06] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="truncate font-semibold">{booking.traveler || booking.id}</h2><p className="mt-1 text-xs text-white/65">Booking {booking.id} · {booking.pax} pax{booking.pickupTime ? ` · Pickup ${booking.pickupTime}` : ''}</p></div>{point && <button type="button" onClick={() => { setView('map'); window.setTimeout(() => map.current?.flyTo({ center: [point.lng, point.lat], zoom: 14 }), 100) }} className="shrink-0 rounded-xl bg-teal-500/20 p-3 text-teal-200" aria-label={`Show stop ${index + 1} on map`}><MapPin className="size-5" /></button>}</div><a href={booking.phone ? `tel:${booking.phone}` : undefined} className="mt-3 block text-sm font-medium text-teal-300">{booking.phone || 'No phone number'}</a><p className="mt-2 text-xs leading-5 text-white/65">{booking.pickup || 'No pickup location'}</p>{point && <button type="button" onClick={() => openMaps(point)} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/10 px-3 text-xs font-semibold text-white/85"><Navigation className="size-4" /> Navigate to stop</button>}</article>})}</div></div>}
+    <div className="pointer-events-none absolute inset-0 z-10">
+      <header className="pointer-events-auto absolute inset-x-3 top-3 rounded-2xl border border-white/15 bg-black/70 p-4 backdrop-blur-md">
+        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-teal-300">Guide pickups</p><h1 className="mt-1 text-lg font-semibold">Group {data.groupNumber}</h1><p className="text-sm text-white/70">{data.guide || 'Pickup team'} · {totalPax} pax · {data.bookings.length} pickups</p></div><MapPin className="size-5 shrink-0 text-teal-300" /></div>
+        <div className="mt-3 flex gap-2"><button type="button" onClick={() => setView('map')} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl text-xs font-semibold ${view === 'map' ? 'bg-teal-500 text-black' : 'bg-white/10 text-white/75'}`}><MapIcon className="size-4" /> Map</button><button type="button" onClick={() => setView('list')} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl text-xs font-semibold ${view === 'list' ? 'bg-teal-500 text-black' : 'bg-white/10 text-white/75'}`}><List className="size-4" /> List</button></div>
+        {view === 'map' && <div className="mt-2 flex gap-2"><button type="button" onClick={() => void showRoute()} disabled={routeBusy || points.length < 2} className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-white/10 text-xs font-semibold disabled:opacity-40"><Car className="size-4" /> {routeBusy ? 'Calculating…' : route ? 'Recalculate route' : 'Show route'}</button>{route && <button type="button" onClick={clearRoute} className="rounded-xl border border-white/10 px-3 text-xs text-white/70">Clear</button>}</div>}
+        {route && <p className="mt-2 text-center text-xs text-teal-200">{(route.distance / 1000).toFixed(1)} km · ~{Math.max(1, Math.round(route.duration / 60))} min driving preview</p>}
+      </header>
+      {view === 'map' && <p className="absolute inset-x-0 bottom-6 px-6 text-center text-[11px] text-white/70" style={{ textShadow: '0 1px 3px rgba(0,0,0,.9)' }}>Tap a pin for booking details · route is a planning preview</p>}
+    </div>
+  </main>
 }
