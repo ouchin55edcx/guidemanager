@@ -7,6 +7,7 @@ const SHARE_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_ATTEMPTS = 2
 
 export const SHARE_COOKIE = 'ms_owner_share'
+export const GUIDE_SHARE_COOKIE = 'ms_guide_share'
 
 export function generateToken() { return randomBytes(24).toString('base64url') }
 export function generatePin() { return String(10000 + Math.floor(Math.random() * 90000)) }
@@ -24,6 +25,15 @@ export async function createOwnerShare(date: string) {
   const expiresAt = new Date(Date.now() + SHARE_TTL_MS)
   await db.execute(sql`INSERT INTO share_links (token, pin_hash, role, date, expires_at) VALUES (${token}, ${hashPin(pin)}, 'owner', ${date}, ${expiresAt})`)
   return { token, pin, date, expiresAt: expiresAt.toISOString(), url: `/share/${token}` }
+}
+
+export async function createGuideShare(date: string, groupNumber: number) {
+  await ensureTables()
+  const token = generateToken()
+  const pin = generatePin()
+  const expiresAt = new Date(Date.now() + SHARE_TTL_MS)
+  await db.execute(sql`INSERT INTO share_links (token, pin_hash, role, date, group_number, expires_at) VALUES (${token}, ${hashPin(pin)}, 'guide', ${date}, ${groupNumber}, ${expiresAt})`)
+  return { token, pin, date, groupNumber, expiresAt: expiresAt.toISOString(), url: `/g/${token}` }
 }
 
 export type ShareStatus = 'active' | 'expired' | 'revoked' | 'locked'
